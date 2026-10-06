@@ -14,6 +14,7 @@ CreditLens is a **systematic credit relative-value strategy for USD investment-g
 - **Evaluation:** we test the index walk-forward on history, net of trading costs, and measure its risk under stress.
 - **Product:** we package it as a capital-protected note (zero-coupon bond + call option on the index), priced with its Greeks and hedge behaviour.
 - **Platform:** the system runs on AWS.
+- **Data is a historical snapshot, not a live feed:** Bloomberg is extracted once from the Terminal to a laptop (history up to the 12 Oct 2026 pull). "Live" monthly operation is demonstrated by replaying history month by month, as if each month were today.
 - **Research layer:** an AI research layer (RAG + a read-only agent) explains the numbers from company filings. It never makes the investment decision.
 
 ---
@@ -154,7 +155,7 @@ Bloomberg (bonds, spreads, ratings, fundamentals) + FRED (rates, VIX, IG/HY OAS)
 **[7] AWS**
 
 - **Storage:** S3 for processed data. Raw Bloomberg data goes there only if the licence permits.
-- **Compute:** a containerised backtest on ECS Fargate, scheduled monthly by EventBridge.
+- **Compute:** a containerised backtest + rebalance job on ECS Fargate. EventBridge triggers it on a schedule to show how it would run in production; because the data is a static snapshot, each run replays the next historical month ("as-of replay") rather than pulling new prices. Public FRED and EDGAR data can refresh for real.
 - **API and monitoring:** a read-only research API on API Gateway + Lambda, and CloudWatch logs, metrics and alarms. Everything is defined in IaC with budget alarms.
 - **Why Fargate, not Lambda, for the backtest:** a long, memory-heavy batch job in a container fits Fargate. The API's short request/response fits Lambda.
 
@@ -192,7 +193,7 @@ All are measured **out of sample, net of costs**.
 | S4 | Risk is reproducible | VaR/ES/DTS and scenarios regenerate from versioned data each rebalance |
 | S5 | The note is priced consistently | Black-Scholes ≈ Monte Carlo within tolerance; parity holds; hedge P&L explained |
 | S6 | The AI layer is trustworthy | RAG recall@k / faithfulness / refusal; agent tool and numeric accuracy; cost per memo |
-| S7 | It runs as a system | Scheduled AWS run reproduces local results; CI green; monitoring and runbook in place |
+| S7 | It runs as a system | Scheduled AWS replay run reproduces local results; CI green; monitoring and runbook in place |
 
 **A finding of "no edge after costs" is an acceptable, reportable outcome.**
 
@@ -202,7 +203,7 @@ All are measured **out of sample, net of costs**.
 
 | Source | Content | Notes |
 |---|---|---|
-| Bloomberg (Excel Add-In) | Bond and issuer data | Main pull 12 Oct 2026; top-up at the start of November if needed. Credits are limited and renew monthly; no Terminal access during winter break. Raw data never committed. |
+| Bloomberg (Excel Add-In) | Bond and issuer data | Historical snapshot, no API or live feed (Terminal only). Main pull 12 Oct 2026; top-up at the start of November if needed. Credits are limited and renew monthly; no Terminal access during winter break. Raw data never committed. |
 | FRED | Treasury yields, VIX, ICE BofA IG/HY OAS indices | Public |
 | SEC EDGAR | 10-K / 10-Q filings | Public; used by the RAG layer and as a fundamentals fallback |
 
@@ -211,6 +212,7 @@ All are measured **out of sample, net of costs**.
 - Monthly data is enough for a monthly rebalance strategy.
 - A bid-ask cost model by rating and size is a reasonable proxy for IG trading costs.
 - About 7 years of history gives enough walk-forward folds. This will be confirmed in M02.
+- The last ~12 months of the snapshot are held out untouched until the final evaluation, standing in for "live" performance.
 
 **Risks and mitigations**
 
@@ -220,6 +222,7 @@ All are measured **out of sample, net of costs**.
 | Look-ahead or leakage | PIT joins with report dates, embargo, automated leakage tests in CI |
 | Overfitting | Walk-forward, simple baselines, record of variants tried, bootstrap CIs |
 | Costs wipe out the edge | Costs modelled from the start; turnover buffer; report net results only |
+| No live data after the pull | Month-by-month replay demonstrates operation; final ~12 months kept as an untouched holdout; stated clearly as a limitation |
 | Licence restricts cloud storage | Admin answer pending; if not allowed, only processed or public data goes to S3 |
 | The LLM hallucinates | As-of retrieval, citations, refusal, read-only tools, evaluation sets, injection tests |
 
